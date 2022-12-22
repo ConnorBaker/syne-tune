@@ -6,6 +6,7 @@ black==22.3.0
 flake8
 mypy
 pyright
+pandas-stubs
 sphinx
 sphinx-rtd-theme
 sphinx-autodoc-typehints

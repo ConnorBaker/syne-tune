@@ -8,9 +8,10 @@ platform = "linux"
 # TODO: Clean up the code so it passes strict checks
 strict = false
 warn_unused_ignores = false # Pyright catches different things than mypy
+ignore_missing_imports = true
 
 [tool.pyright]
-include = ["./syne_tune"]
+include = ["./syne_tune/backend"]
 pythonVersion = "3.9"
 pythonPlatform = "Linux"
 # TODO: Clean up the code so it passes strict checks

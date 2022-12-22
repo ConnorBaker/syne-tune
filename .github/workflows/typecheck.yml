@@ -22,7 +22,7 @@ jobs:
       - run: python3 -m pip install pip --upgrade
       - run: python3 -m pip install '.[extra]'
       - run: echo "::add-matcher::./.github/problem_matchers/mypy.jsonc"
-      - run: mypy ./benchmarking ./examples ./syne_tune ./tst
+      - run: mypy ./syne_tune/backend
       - run: echo "::remove-matcher owner=mypy::"
 
   pyright:
@@ -37,6 +37,5 @@ jobs:
       - run: python3 -m pip install pip --upgrade
       - run: python3 -m pip install '.[extra]'
       - run: echo "::add-matcher::./.github/problem_matchers/pyright.jsonc"
-      - run: pyright ./benchmarking ./examples ./syne_tune ./tst
+      - run: pyright ./syne_tune/backend
       - run: echo "::remove-matcher owner=pyright::"
-      - run: pyright --verifytypes syne_tune --ignoreexternal --pythonversion 3.10 --pythonplatform Linux --verbose
