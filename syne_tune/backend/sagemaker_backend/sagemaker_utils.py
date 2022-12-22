@@ -18,7 +18,8 @@ import subprocess
 import tarfile
 from ast import literal_eval
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
+from typing import Any, Collection, List, Tuple, Dict, Optional
+from typing_extensions import TypedDict
 
 import boto3
 from botocore.config import Config
@@ -47,16 +48,18 @@ def default_config() -> Config:
     )
 
 
-def default_sagemaker_session():
+def default_sagemaker_session() -> Session:
     sagemaker_client = boto3.client(service_name="sagemaker", config=default_config())
     return Session(sagemaker_client=sagemaker_client)
 
 
-def get_log(jobname: str, log_client=None) -> List[str]:
+# TODO(@connorbaker): Provide a real type for log_client "CloudWatchLogs". May require
+# boto type stubs.
+def get_log(jobname: str, log_client: Optional[Any] = None) -> List[str]:
     """
     :param jobname: name of a sagemaker training job
-    :param log_client: a log client, for instance ``boto3.client('logs')`` if None, the client is instantiated with the
-    default AWS configuration
+    :param log_client: a log client, for instance ``boto3.client('logs')`` if None, the
+    client is instantiated with the default AWS configuration
     :return: lines appearing in the log of the Sagemaker training job
     """
     if log_client is None:
@@ -88,9 +91,9 @@ def get_log(jobname: str, log_client=None) -> List[str]:
     return res
 
 
-def decode_sagemaker_hyperparameter(hp: str):
-    # Sagemaker encodes hyperparameters as literals which are compatible with Python, except for true and false
-    # that are respectively encoded as 'true' and 'false'.
+def decode_sagemaker_hyperparameter(hp: str) -> object:
+    # Sagemaker encodes hyperparameters as literals which are compatible with Python,
+    # except for true and false that are respectively encoded as 'true' and 'false'.
     if hp == "true":
         return True
     elif hp == "false":
@@ -100,12 +103,16 @@ def decode_sagemaker_hyperparameter(hp: str):
 
 def sagemaker_search(
     trial_ids_and_names: List[Tuple[int, str]],
-    sm_client=None,
+    # TODO(@connorbaker): Provide a real type for sm_client "SageMaker". May require
+    # boto type stubs.
+    sm_client: Optional[Any] = None,
 ) -> List[TrialResult]:
     """
-    :param trial_ids_and_names: Trial ids and sagemaker jobnames to retrieve information from
+    :param trial_ids_and_names: Trial ids and sagemaker jobnames to retrieve
+    information from
     :param sm_client:
-    :return: list of dictionary containing job information (status, creation-time, metrics, hyperparameters etc).
+    :return: list of dictionary containing job information (status, creation-time,
+    metrics, hyperparameters etc).
     In term of speed around 100 jobs can be retrieved per second.
     """
     if sm_client is None:
@@ -116,7 +123,8 @@ def sagemaker_search(
 
     trial_dict = {}
 
-    # Sagemaker Search has a maximum length for filters of 20, hence we call search with 20 jobs at once
+    # Sagemaker Search has a maximum length for filters of 20, hence we call search
+    # with 20 jobs at once
     bucket_limit = 20
 
     def chunks(lst, n):
@@ -145,15 +153,19 @@ def sagemaker_search(
             job_info = results["TrainingJob"]
             name = job_info["TrainingJobName"]
 
-            # remove sagemaker specific stuff such as container_log_level from hyperparameters
-            hps = {
+            # remove sagemaker specific stuff such as container_log_level from
+            # hyperparameters
+            hps_strs: Dict[str, str] = {
                 k: v
                 for k, v in job_info["HyperParameters"].items()
                 if not k.startswith("sagemaker_")
             }
 
-            # Sagemaker encodes hyperparameters as literals, we evaluate them to retrieve the original type
-            hps = {k: decode_sagemaker_hyperparameter(v) for k, v in hps.items()}
+            # Sagemaker encodes hyperparameters as literals, we evaluate them to
+            # retrieve the original type
+            hps: Dict[str, object] = {
+                k: decode_sagemaker_hyperparameter(v) for k, v in hps_strs.items()
+            }
 
             metrics = retrieve(log_lines=get_log(name))
 
@@ -162,14 +174,14 @@ def sagemaker_search(
             trial_dict[trial_id] = TrialResult(
                 trial_id=trial_id,
                 config=hps,
-                metrics=metrics,
+                metrics=metrics,  # type: ignore[arg-type]
                 status=job_info["TrainingJobStatus"],
                 creation_time=job_info["CreationTime"],
                 training_end_time=job_info.get("TrainingEndTime", None),
             )
 
-    # Sagemaker Search returns results sorted by last modified time, we reorder the results so that they are returned
-    # with the same order as the trial-ids passed
+    # Sagemaker Search returns results sorted by last modified time, we reorder the
+    # results so that they are returned with the same order as the trial-ids passed
     sorted_res = [
         trial_dict[trial_id]
         for trial_id, _ in trial_ids_and_names
@@ -178,18 +190,24 @@ def sagemaker_search(
     return sorted_res
 
 
-def metric_definitions_from_names(metrics_names):
+def metric_definitions_from_names(
+    metrics_names: Collection[str],
+) -> List[Dict[str, str]]:
     """
     :param metrics_names: names of the metrics present in the log.
-    Metrics must be written in the log as [metric-name]: value, for instance [accuracy]: 0.23
-    :return: a list of metric dictionaries that can be passed to sagemaker so that metrics are parsed from logs, the
-    list can be passed to ``metric_definitions`` in sagemaker.
+    Metrics must be written in the log as [metric-name]: value, for instance
+    [accuracy]: 0.23
+    :return: a list of metric dictionaries that can be passed to sagemaker so that
+    metrics are parsed from logs, the list can be passed to ``metric_definitions`` in
+    sagemaker.
     """
 
-    def metric_dict(metric_name):
+    # TODO(@connorbaker): This feels like it should be a typed dict.
+    def metric_dict(metric_name: str) -> Dict[str, str]:
         """
         :param metric_name:
-        :return: a sagemaker metric definition to enable Sagemaker to interpret metrics from logs
+        :return: a sagemaker metric definition to enable Sagemaker to interpret metrics
+        from logs
         """
         regex = rf".*[tune-metric].*\"{re.escape(metric_name)}\": ([-+]?\d\.?\d*)"
         return {"Name": metric_name, "Regex": regex}
@@ -197,11 +215,11 @@ def metric_definitions_from_names(metrics_names):
     return [metric_dict(m) for m in metrics_names]
 
 
-def add_syne_tune_dependency(sm_estimator):
-    # adds code of syne tune to the estimator to be sent with the estimator dependencies so that report.py or
-    # other functions of syne tune can be found
+def add_syne_tune_dependency(sm_estimator: Framework) -> None:
+    # adds code of syne tune to the estimator to be sent with the estimator
+    # dependencies so that report.py or other functions of syne tune can be found
     sm_estimator.dependencies = sm_estimator.dependencies + [
-        str(Path(syne_tune.__path__[0]))
+        str(Path(next(iter(syne_tune.__path__))))
     ]
 
 
@@ -213,30 +231,36 @@ def sagemaker_fit(
     job_name: Optional[str] = None,
     *sagemaker_fit_args,
     **sagemaker_fit_kwargs,
-):
+) -> str:
     """
     :param sm_estimator: sagemaker estimator to be fitted
-    :param hyperparameters: dictionary of hyperparameters that are passed to ``entry_point_script``
+    :param hyperparameters: dictionary of hyperparameters that are passed to
+    ``entry_point_script``
     :param checkpoint_s3_uri: checkpoint_s3_uri of Sagemaker Estimator
     :param wait: whether to wait for job completion
-    :param metrics_names: names of metrics to track reported with ``report.py``. In case those metrics are passed, their
-    learning curves will be shown in Sagemaker console.
+    :param metrics_names: names of metrics to track reported with ``report.py``. In
+    case those metrics are passed, their learning curves will be shown in Sagemaker
+    console.
     :return: name of sagemaker job
     """
     experiment = sm_estimator
-    experiment._hyperparameters = hyperparameters
+    experiment._hyperparameters = hyperparameters  # type: ignore[assignment]
     experiment.checkpoint_s3_uri = checkpoint_s3_uri
 
     experiment.fit(
         wait=wait, job_name=job_name, *sagemaker_fit_args, **sagemaker_fit_kwargs
     )
 
-    return experiment.latest_training_job.job_name
+    assert experiment.latest_training_job is not None
+    job_name = experiment.latest_training_job.job_name
+    assert isinstance(job_name, str)
+    return job_name
 
 
-def get_execution_role():
+def get_execution_role() -> str:
     """
-    :return: sagemaker execution role that is specified with the environment variable ``AWS_ROLE``, if not specified then
+    :return: sagemaker execution role that is specified with the environment variable
+    ``AWS_ROLE``, if not specified then
     we infer it by searching for the role associated to Sagemaker. Note that
     ``import sagemaker; sagemaker.get_execution_role()``
     does not return the right role outside of a Sagemaker notebook.
@@ -244,12 +268,13 @@ def get_execution_role():
     if "AWS_ROLE" in os.environ:
         aws_role = os.environ["AWS_ROLE"]
         logger.info(
-            f"Using Sagemaker role {aws_role} passed set as environment variable $AWS_ROLE"
+            f"Using Sagemaker role {aws_role} passed set as environment variable "
+            "$AWS_ROLE"
         )
         return aws_role
     else:
         logger.info(
-            f"No Sagemaker role passed as environment variable $AWS_ROLE, inferring it."
+            "No Sagemaker role passed as environment variable $AWS_ROLE, inferring it."
         )
         client = boto3.client("iam", config=default_config())
         sm_roles = client.list_roles(PathPrefix="/service-role/")["Roles"]
@@ -257,19 +282,21 @@ def get_execution_role():
             if "AmazonSageMaker-ExecutionRole" in role["RoleName"]:
                 return role["Arn"]
         raise Exception(
-            "Could not infer Sagemaker role, specify it by specifying ``AWS_ROLE`` environement variable "
-            "or refer to https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html to create a new one"
+            "Could not infer Sagemaker role, specify it by specifying ``AWS_ROLE`` "
+            "environement variable or refer to "
+            "https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html to "
+            "create a new one"
         )
 
 
-def untar(filename: Path):
+def untar(filename: Path) -> None:
     if str(filename).endswith("tar.gz"):
         tar = tarfile.open(filename, "r:gz")
         tar.extractall(path=filename.parent)
         tar.close()
 
 
-def download_sagemaker_results(s3_path: Optional[str] = None):
+def download_sagemaker_results(s3_path: Optional[str] = None) -> None:
     """
     Download results obtained after running tuning remotely on Sagemaker,
     e.g. when using ``RemoteLauncher``.
@@ -306,7 +333,15 @@ def map_identifier_limited_length(
         return name[: (max_length - rnd_digits)] + postfix
 
 
-def _s3_traverse_recursively(s3_client, action, bucket: str, prefix: str) -> dict:
+class S3ActionResult(TypedDict):
+    num_action_calls: int
+    num_successful_action_calls: int
+    first_error_message: Optional[str]
+
+
+def _s3_traverse_recursively(
+    s3_client, action, bucket: str, prefix: str
+) -> S3ActionResult:
     """
     Traverses directory from root ``prefix``. The function ``action`` is applied
     to all objects encountered, the signature is
@@ -358,14 +393,14 @@ def _s3_traverse_recursively(s3_client, action, bucket: str, prefix: str) -> dic
         num_successful_action_calls += result["num_successful_action_calls"]
         if first_error_message is None:
             first_error_message = result["first_error_message"]
-    return dict(
-        num_action_calls=num_action_calls,
-        num_successful_action_calls=num_successful_action_calls,
-        first_error_message=first_error_message,
-    )
+    return {
+        "num_action_calls": num_action_calls,
+        "num_successful_action_calls": num_successful_action_calls,
+        "first_error_message": first_error_message,
+    }
 
 
-def _split_bucket_prefix(s3_path: str) -> (str, str):
+def _split_bucket_prefix(s3_path: str) -> Tuple[str, str]:
     assert s3_path[:5] == "s3://", s3_path
     parts = s3_path[5:].split("/")
     bucket = parts[0]
@@ -375,7 +410,9 @@ def _split_bucket_prefix(s3_path: str) -> (str, str):
     return bucket, prefix
 
 
-def s3_copy_files_recursively(s3_source_path: str, s3_target_path: str) -> dict:
+def s3_copy_files_recursively(
+    s3_source_path: str, s3_target_path: str
+) -> S3ActionResult:
     """
     Recursively copies files from ``s3_source_path`` to ``s3_target_path``.
 
@@ -402,7 +439,7 @@ def s3_copy_files_recursively(s3_source_path: str, s3_target_path: str) -> dict:
                 CopySource=copy_source, Bucket=trg_bucket, Key=target_key
             )
             logger.debug(
-                f"Copied s3://{bucket}/{object_key}   to   s3://{trg_bucket}/{target_key}"
+                f"Copied s3://{bucket}/{object_key} to s3://{trg_bucket}/{target_key}"
             )
         except ClientError as ex:
             ret_msg = str(ex)
@@ -414,7 +451,7 @@ def s3_copy_files_recursively(s3_source_path: str, s3_target_path: str) -> dict:
     )
 
 
-def s3_delete_files_recursively(s3_path: str) -> dict:
+def s3_delete_files_recursively(s3_path: str) -> S3ActionResult:
     """
     Recursively deletes files from ``s3_path``.
 

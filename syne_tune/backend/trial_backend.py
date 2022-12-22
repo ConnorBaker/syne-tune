@@ -14,7 +14,7 @@ from collections import defaultdict
 
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 import logging
 
 from syne_tune.backend.trial_status import TrialResult, Trial, Status
@@ -23,10 +23,10 @@ from syne_tune.constants import ST_WORKER_TIMESTAMP
 logger = logging.getLogger(__name__)
 
 
-TrialAndStatusInformation = Dict[int, Tuple[Trial, str]]
+TrialAndStatusInformation = Dict[int, Tuple[Trial, Status]]
 
 
-TrialIdAndResultList = List[Tuple[int, dict]]
+TrialIdAndResultList = List[Tuple[int, Dict[str, Any]]]
 
 
 BUSY_STATUS = {Status.in_progress, Status.stopping}
@@ -45,11 +45,11 @@ class TrialBackend:
 
     def __init__(self, delete_checkpoints: bool = False):
         self.delete_checkpoints = delete_checkpoints
-        self.trial_ids = []
-        self._trial_dict = dict()
+        self.trial_ids: List[int] = []
+        self._trial_dict: Dict[int, TrialResult] = dict()
 
         # index of the last metric that was seen for each trial-id
-        self._last_metric_seen_index = defaultdict(lambda: 0)
+        self._last_metric_seen_index: Dict[int, int] = defaultdict(lambda: 0)
 
     def start_trial(
         self, config: dict, checkpoint_trial_id: Optional[int] = None
@@ -112,9 +112,10 @@ class TrialBackend:
             self.trial_ids
         ), "cannot resume a trial id that is not present"
         trial = self._trial_dict[trial_id]
-        assert (
-            trial.status == Status.paused
-        ), f"Cannot resume trial_id {trial_id} from status '{trial.status}', must be '{Status.paused}'"
+        assert trial.status == Status.paused, (
+            f"Cannot resume trial_id {trial_id} from status '{trial.status}', must be "
+            f"'{Status.paused}'"
+        )
         self._resume_trial(trial_id)
         if new_config is not None:
             trial.config = new_config
@@ -207,7 +208,7 @@ class TrialBackend:
 
     def fetch_status_results(
         self, trial_ids: List[int]
-    ) -> (TrialAndStatusInformation, TrialIdAndResultList):
+    ) -> Tuple[TrialAndStatusInformation, TrialIdAndResultList]:
         """
         :param trial_ids: Trials whose information should be fetched.
         :return: A tuple containing 1) a dictionary from trial-id to Trial and status
@@ -216,7 +217,7 @@ class TrialBackend:
             time-stamp.
         """
         all_trial_results = self._all_trial_results(trial_ids)
-        results = []
+        results: List[Tuple[int, Dict[str, object]]] = []
         for trial_result in all_trial_results:
             trial_id = trial_result.trial_id
             self._trial_dict[trial_id] = trial_result
@@ -226,31 +227,37 @@ class TrialBackend:
                     Status.stopping,
                     Status.stopped,
                 ]:
-                    # metrics obtained after a stopping decision from a scheduler are hidden.
+                    # metrics obtained after a stopping decision from a scheduler are
+                    # hidden.
                     new_metrics = []
                 else:
-                    # we return the list of all new metrics, which may be empty if no new metrics were generated.
+                    # we return the list of all new metrics, which may be empty if no
+                    # new metrics were generated.
                     position_last_seen = self._last_metric_seen_index[trial_id]
                     new_metrics = trial_result.metrics[position_last_seen:]
                     self._last_metric_seen_index[trial_id] += len(new_metrics)
                 for new_metric in new_metrics:
                     results.append((trial_id, new_metric))
 
-        trial_status_dict = dict()
+        trial_status_dict: Dict[int, Tuple[Trial, Status]] = dict()
         for trial_id in trial_ids:
             trial_result = self._trial_dict[trial_id]
-            # we cast TrialResult to Trial to avoid downstream code depending on TrialResult which we should ultimately
-            # remove (since it duplicates several information such as status or list of results)
+            # we cast TrialResult to Trial to avoid downstream code depending on
+            # TrialResult which we should ultimately remove (since it duplicates
+            # several information such as status or list of results)
             trial = Trial(
                 trial_id=trial_result.trial_id,
                 config=trial_result.config,
                 creation_time=trial_result.creation_time,
             )
             trial_status_dict[trial_id] = (trial, trial_result.status)
-        results = sorted(results, key=lambda result: result[1][ST_WORKER_TIMESTAMP])
+        results = sorted(
+            results,
+            key=lambda result: result[1][ST_WORKER_TIMESTAMP],  # type: ignore
+        )
         return trial_status_dict, results
 
-    def busy_trial_ids(self) -> List[Tuple[int, str]]:
+    def busy_trial_ids(self) -> List[Tuple[int, Status]]:
         """Returns list of ids for currently busy trials
 
         A trial is busy if its status is

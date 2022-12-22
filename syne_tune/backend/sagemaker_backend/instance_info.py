@@ -30,8 +30,9 @@ class InstanceInfos:
     Utility to get information of an instance type (num cpu/gpu, cost per hour).
     """
 
-    def __init__(self):
-        # TODO right now, we use a static file but some services are available to get updated information
+    def __init__(self) -> None:
+        # TODO right now, we use a static file but some services are available to get
+        #  updated information
         root = Path(__file__).parent
         self.df_instances = pd.read_csv(
             root / "instance-types-cost.csv", delimiter=";"
@@ -40,11 +41,25 @@ class InstanceInfos:
 
     def __call__(self, instance_type: str) -> InstanceInfo:
         row = self.df_instances.loc[self.df_instances.instance == instance_type]
+
+        name = row["instance"].values[0]
+        assert name is not None
+        name = str(name)
+
+        num_cpu = row["vCPU"].values[0]
+        assert num_cpu is not None
+        num_cpu = int(num_cpu)
+
+        num_gpu = row["GPU"].values[0]
+        assert num_gpu is not None
+        num_gpu = int(num_gpu)
+
+        cost_per_hour = row["price"].values[0]
+        assert cost_per_hour is not None
+        cost_per_hour = float(cost_per_hour)
+
         return InstanceInfo(
-            name=row["instance"].values[0],
-            num_cpu=row["vCPU"].values[0],
-            num_gpu=row["GPU"].values[0],
-            cost_per_hour=row["price"].values[0],
+            name=name, num_cpu=num_cpu, num_gpu=num_gpu, cost_per_hour=cost_per_hour
         )
 
 
@@ -59,8 +74,8 @@ def select_instance_type(
     :param max_gpu:
     :param min_cost_per_hour:
     :param max_cost_per_hour:
-    :return: a list of instance type that met the required constrain on minimum/maximum number of GPU and
-    minimum/maximum cost per hour.
+    :return: a list of instance type that met the required constrain on minimum/maximum
+    number of GPU and minimum/maximum cost per hour.
     """
     res = []
     instance_infos = InstanceInfos()

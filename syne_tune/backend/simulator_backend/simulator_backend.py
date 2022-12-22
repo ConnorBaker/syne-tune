@@ -15,7 +15,7 @@ import logging
 import os
 from datetime import timedelta
 import copy
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 import numpy as np
@@ -70,7 +70,7 @@ class SimulatorConfig:
     delay_start: float = DEFAULT_DELAY
     delay_stop: float = DEFAULT_DELAY
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         assert self.delay_on_trial_result >= 0
         assert self.delay_complete_after_final_report >= 0
         assert self.delay_complete_after_stop >= 0
@@ -133,7 +133,7 @@ class SimulatorBackend(LocalBackend):
         simulator_config: Optional[SimulatorConfig] = None,
         tuner_sleep_time: float = DEFAULT_SLEEP_TIME,
         debug_resource_attr: Optional[str] = None,
-    ):
+    ) -> None:
         super().__init__(entry_point=entry_point, rotate_gpus=False)
         self.elapsed_time_attr = elapsed_time_attr
         if simulator_config is None:
@@ -156,7 +156,7 @@ class SimulatorBackend(LocalBackend):
     @staticmethod
     def _debug_message(
         event_name: str, time: float, trial_id: int, pushed: bool = False, **kwargs
-    ):
+    ) -> None:
         msg_part = "push " if pushed else ""
         msg = f"[{msg_part}{event_name}:"
         parts = [f"time = {time:.2f}", f"trial_id = {trial_id}"] + [
@@ -166,7 +166,7 @@ class SimulatorBackend(LocalBackend):
         logger.debug(msg)
 
     def start_trial(
-        self, config: Dict, checkpoint_trial_id: Optional[int] = None
+        self, config: Dict[str, Any], checkpoint_trial_id: Optional[int] = None
     ) -> Trial:
         # Overwritten to record the correct ``creation_time``
         trial_id = self.new_trial_id()
@@ -186,7 +186,7 @@ class SimulatorBackend(LocalBackend):
 
         return trial
 
-    def _process_events_until_now(self):
+    def _process_events_until_now(self) -> None:
         """Process all events in the queue with times before ``time_keeper.time()``."""
         time_now = self._time_keeper.time()
         next_event = self._simulator_state.next_until(time_now)
@@ -209,7 +209,7 @@ class SimulatorBackend(LocalBackend):
 
     def _process_start_event(
         self, trial_id: int, time_event: float, config: Optional[dict] = None
-    ):
+    ) -> None:
         self._debug_message("StartEvent", time=time_event, trial_id=trial_id)
         # Run training script and record results
         status, results = self._run_job_and_collect_results(trial_id, config=config)
@@ -256,7 +256,9 @@ class SimulatorBackend(LocalBackend):
         )
         self._busy_trial_ids.add(trial_id)
 
-    def _process_complete_event(self, trial_id: int, time_event: float, status: str):
+    def _process_complete_event(
+        self, trial_id: int, time_event: float, status: Status
+    ) -> None:
         self._debug_message(
             "CompleteEvent", time=time_event, trial_id=trial_id, status=status
         )
@@ -276,7 +278,7 @@ class SimulatorBackend(LocalBackend):
         if trial_id in self._busy_trial_ids:
             self._busy_trial_ids.remove(trial_id)
 
-    def _process_stop_event(self, trial_id: int, time_event: float):
+    def _process_stop_event(self, trial_id: int, time_event: float) -> None:
         self._debug_message("StopEvent", time=time_event, trial_id=trial_id)
         # Remove all remaining events for ``trial_id``. This includes
         # the ``CompleteEvent`` pushed with ``StartEvent``, so there can
@@ -288,9 +290,9 @@ class SimulatorBackend(LocalBackend):
 
     def _process_on_trial_result_event(
         self, time_event: float, event: OnTrialResultEvent
-    ):
+    ) -> None:
         trial_id = event.trial_id
-        result = copy.copy(event.result)
+        result: Dict[str, object] = copy.copy(event.result)
         if self._debug_resource_attr:
             k = self._debug_resource_attr
             debug_kwargs = {k: result.get(k)}
@@ -300,6 +302,7 @@ class SimulatorBackend(LocalBackend):
             "OnTrialResultEvent",
             time=time_event,
             trial_id=trial_id,
+            pushed=False,
             **debug_kwargs,
         )
         # Append timestamps to ``result``. This is done here, but not in
@@ -320,17 +323,17 @@ class SimulatorBackend(LocalBackend):
                 training_end_time=None,
             )
 
-    def _advance_by_outside_time(self):
+    def _advance_by_outside_time(self) -> None:
         self._time_keeper.advance(self._time_keeper.real_time_since_last_recent_exit())
 
     def fetch_status_results(
         self, trial_ids: List[int]
-    ) -> (TrialAndStatusInformation, TrialIdAndResultList):
+    ) -> Tuple[TrialAndStatusInformation, TrialIdAndResultList]:
         self._advance_by_outside_time()
         # Process all events in the past
         self._process_events_until_now()
         # Results are collected in ``_next_results_to_fetch``
-        results = []
+        results: TrialIdAndResultList = []
         for trial_id in trial_ids:
             result_list = self._next_results_to_fetch.get(trial_id)
             if result_list is not None:
@@ -362,7 +365,7 @@ class SimulatorBackend(LocalBackend):
         if len(results) > 0 and ST_WORKER_TIMESTAMP in results[0]:
             results = sorted(results, key=lambda result: result[1][ST_WORKER_TIMESTAMP])
 
-        trial_status_dict = dict()
+        trial_status_dict: TrialAndStatusInformation = dict()
         for trial_id in trial_ids:
             trial_result = self._trial_dict[trial_id]
             status = (
@@ -380,10 +383,11 @@ class SimulatorBackend(LocalBackend):
         self._time_keeper.mark_exit()
         return trial_status_dict, results
 
-    def _schedule(self, trial_id: int, config: Dict):
+    # TODO(@connorbaker): Give a better type for ``config``.
+    def _schedule(self, trial_id: int, config: Dict[str, Any]) -> None:
         """
-        This is called by :meth:`start_trial` or :meth:`resume_trial`. We register a start
-        event here. ``config`` can be ignored, it will be in
+        This is called by :meth:`start_trial` or :meth:`resume_trial`. We register a
+        start event here. ``config`` can be ignored, it will be in
         ``trial(trial_id).config`` once the start event is executed.
 
         Note: This call is "non-blocking": The start event is registered
@@ -420,16 +424,16 @@ class SimulatorBackend(LocalBackend):
                 results.append(trial_result)
         return results
 
-    def _pause_trial(self, trial_id: int, result: Optional[dict]):
+    def _pause_trial(self, trial_id: int, result: Optional[dict]) -> None:
         self._stop_or_pause_trial(trial_id, status=Status.paused)
 
-    def _resume_trial(self, trial_id: int):
+    def _resume_trial(self, trial_id: int) -> None:
         pass
 
-    def _stop_trial(self, trial_id: int, result: Optional[dict]):
+    def _stop_trial(self, trial_id: int, result: Optional[dict]) -> None:
         self._stop_or_pause_trial(trial_id, status=Status.stopped)
 
-    def _stop_or_pause_trial(self, trial_id: int, status: str):
+    def _stop_or_pause_trial(self, trial_id: int, status: Status) -> None:
         """
         This is called by :meth:`stop_trial`` or :meth:`pause_trial``.
 
@@ -464,8 +468,8 @@ class SimulatorBackend(LocalBackend):
         self._time_keeper.mark_exit()
 
     def _run_job_and_collect_results(
-        self, trial_id: int, config: Optional[dict] = None
-    ) -> (str, List[dict]):
+        self, trial_id: int, config: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Status, List[Dict[str, Any]]]:
         """
         Runs training evaluation script for trial ``trial_id``, using the config
         ``trial(trial_id).config``. This is a blocking call, we wait for the
@@ -480,6 +484,7 @@ class SimulatorBackend(LocalBackend):
         ), f"Trial with trial_id = {trial_id} not registered with back-end"
         if config is None:
             config = self._trial_dict[trial_id].config
+            assert config is not None
 
         # Run training script and fetch all results
         trial_path = self.trial_path(trial_id)
@@ -495,7 +500,8 @@ class SimulatorBackend(LocalBackend):
                 return obj.item()
 
         with open(trial_path / "config.json", "w") as f:
-            # the encoder fixes json error "TypeError: Object of type 'int64' is not JSON serializable"
+            # the encoder fixes json error "TypeError: Object of type 'int64' is not
+            # JSON serializable"
             json.dump(config, f, default=np_encoder)
         cmd = f"python {self.entry_point} {config_str}"
         env = dict(os.environ)
@@ -522,6 +528,6 @@ class SimulatorBackend(LocalBackend):
         results = all_results[num_already_before:]
         return status, results
 
-    def busy_trial_ids(self) -> List[Tuple[int, str]]:
+    def busy_trial_ids(self) -> List[Tuple[int, Status]]:
         self._process_events_until_now()
         return [(trial_id, Status.in_progress) for trial_id in self._busy_trial_ids]

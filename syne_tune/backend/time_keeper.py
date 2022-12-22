@@ -10,10 +10,13 @@
 # on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
+from dataclasses import dataclass, field
 import time
 from datetime import datetime
+from typing import Optional
 
 
+@dataclass
 class TimeKeeper:
     """
     To be used by tuner, backend, and scheduler to measure time differences
@@ -51,9 +54,9 @@ class TimeKeeper:
         raise NotImplementedError
 
 
+@dataclass
 class RealTimeKeeper(TimeKeeper):
-    def __init__(self):
-        self._start_time = None
+    _start_time: Optional[float] = field(default=None, init=False)
 
     def start_of_time(self):
         self._start_time = time.time()
@@ -65,7 +68,7 @@ class RealTimeKeeper(TimeKeeper):
 
     def time(self) -> float:
         self._assert_has_started()
-        return time.time() - self._start_time
+        return time.time() - self._start_time  # type: ignore[operator]
 
     def time_stamp(self) -> datetime:
         self._assert_has_started()

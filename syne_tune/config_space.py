@@ -11,14 +11,15 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-# This file has been taken from Ray. The reason for reusing the file is to be able to support the same API when
-# defining search space while avoiding to have Ray as a required dependency. We may want to add functionality in the
-# future.
+# This file has been taken from Ray. The reason for reusing the file is to be able to
+# support the same API when defining search space while avoiding to have Ray as a
+# required dependency. We may want to add functionality in the future.
 import logging
 from copy import copy
 from math import isclose
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Union
+from typing_extensions import TypeAlias
 import argparse
 
 import numpy as np
@@ -26,6 +27,10 @@ import numpy as np
 from syne_tune.util import is_increasing
 
 logger = logging.getLogger(__name__)
+
+# TODO(@connorbaker): Use this type alias more widely to prevent erroroneous ad-hoc
+# type annotations
+ConfigSpace: TypeAlias = Dict[str, Union["Domain", int, float, str]]
 
 
 class Domain:

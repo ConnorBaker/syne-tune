@@ -14,7 +14,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import boto3
 from botocore.exceptions import ClientError
 import numpy as np
@@ -22,11 +22,12 @@ import time
 
 from sagemaker import LocalSession
 from sagemaker.estimator import Framework
+from sagemaker.workflow.entities import PipelineVariable
 
 from syne_tune.backend.trial_backend import TrialBackend, BUSY_STATUS
 from syne_tune.constants import ST_INSTANCE_TYPE, ST_INSTANCE_COUNT, ST_CHECKPOINT_DIR
 from syne_tune.util import s3_experiment_path
-from syne_tune.backend.trial_status import TrialResult, Status
+from syne_tune.backend.trial_status import Status, TrialResult
 from syne_tune.backend.sagemaker_backend.sagemaker_utils import (
     sagemaker_search,
     get_log,
@@ -87,12 +88,12 @@ class SageMakerBackend(TrialBackend):
         s3_path: Optional[str] = None,
         delete_checkpoints: bool = False,
         **sagemaker_fit_kwargs,
-    ):
+    ) -> None:
         super(SageMakerBackend, self).__init__(delete_checkpoints)
         self.sm_estimator = sm_estimator
 
-        # edit the sagemaker estimator so that metrics of the user can be plotted over time by sagemaker and so that
-        # the report.py code is available
+        # edit the sagemaker estimator so that metrics of the user can be plotted over
+        # time by sagemaker and so that the report.py code is available
         if metrics_names is None:
             metrics_names = []
         self.metrics_names = metrics_names
@@ -111,8 +112,8 @@ class SageMakerBackend(TrialBackend):
         self.job_id_mapping = dict()
         self.sagemaker_fit_kwargs = sagemaker_fit_kwargs
 
-        # we keep the list of jobs that were paused/stopped as Sagemaker training job status is not immediately changed
-        # after stopping a job.
+        # we keep the list of jobs that were paused/stopped as Sagemaker training job
+        # status is not immediately changed after stopping a job.
         self.paused_jobs = set()
         self.stopped_jobs = set()
         # Counts how often a trial has been resumed
@@ -140,27 +141,35 @@ class SageMakerBackend(TrialBackend):
     def sm_client(self):
         return boto3.client(service_name="sagemaker", config=default_config())
 
-    def add_metric_definitions_to_sagemaker_estimator(self, metrics_names: List[str]):
-        # We add metric definitions corresponding to the metrics passed by ``report`` that the user wants to track
-        # this allows to plot live learning curves of metrics in Sagemaker console.
-        # The reason why we ask to the user metric names is that they are required to be known before hand so that live
-        # plotting works.
+    def add_metric_definitions_to_sagemaker_estimator(
+        self, metrics_names: List[str]
+    ) -> None:
+        # We add metric definitions corresponding to the metrics passed by ``report``
+        # that the user wants to track this allows to plot live learning curves of
+        # metrics in Sagemaker console.
+        # The reason why we ask to the user metric names is that they are required to
+        # be known before hand so that live plotting works.
         if self.sm_estimator.metric_definitions is None:
-            self.sm_estimator.metric_definitions = metric_definitions_from_names(
-                metrics_names
+            # Due to the type invariance of List/Dict, we need to ignore this
+            # assignment.
+            self.sm_estimator.metric_definitions = (  # type: ignore[assignment]
+                metric_definitions_from_names(metrics_names)
             )
         else:
-            self.sm_estimator.metric_definitions = (
+            # Due to the type invariance of List/Dict, we need to ignore this
+            # assignment.
+            self.sm_estimator.metric_definitions = (  # type: ignore[assignment]
                 self.sm_estimator.metric_definitions
                 + metric_definitions_from_names(self.metrics_names)
             )
         if len(self.sm_estimator.metric_definitions) > 40:
             logger.warning(
-                "Sagemaker only supports 40 metrics for learning curve visualization, keeping only the first 40"
+                "Sagemaker only supports 40 metrics for learning curve visualization, "
+                "keeping only the first 40"
             )
-            self.sm_estimator.metric_definitions = self.sm_estimator.metric_definitions[
-                :40
-            ]
+            self.sm_estimator.metric_definitions = (  # type: ignore[assignment]
+                self.sm_estimator.metric_definitions[:40]
+            )
 
     def _all_trial_results(self, trial_ids: List[int]) -> List[TrialResult]:
         res = sagemaker_search(
@@ -170,7 +179,8 @@ class SageMakerBackend(TrialBackend):
             sm_client=self.sm_client,
         )
 
-        # overrides the status return by Sagemaker as the stopping decision may not have been propagated yet.
+        # overrides the status return by Sagemaker as the stopping decision may not
+        # have been propagated yet.
         for trial_res in res:
             trial_id = trial_res.trial_id
             if trial_id in self.paused_jobs:
@@ -179,8 +189,14 @@ class SageMakerBackend(TrialBackend):
                 trial_res.status = Status.stopped
         return res
 
+    # TODO(@connorbaker): Give a better type to ``mydict``.
     @staticmethod
-    def _numpy_serialize(mydict):
+    def _numpy_serialize(mydict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Converts objects inheriting from np.generic to python objects for json
+        serialization.
+        """
+
         def np_encoder(myobject):
             if isinstance(myobject, np.generic):
                 return myobject.item()
@@ -193,17 +209,22 @@ class SageMakerBackend(TrialBackend):
             res_path = f"{res_path}/{self.tuner_name}"
         return f"{res_path}/{str(trial_id)}/checkpoints/"
 
-    def _schedule(self, trial_id: int, config: dict):
+    # TODO(@connorbaker): Give a better type to ``config``.
+    def _schedule(self, trial_id: int, config: Dict[str, Any]) -> None:
         config[ST_CHECKPOINT_DIR] = "/opt/ml/checkpoints"
         hyperparameters = config.copy()
 
-        # This passes the instance type and instance count to the training function in Sagemaker as hyperparameters
-        # with reserved names ``st_instance_type`` and ``st_instance_count``.
-        # We pass them as hyperparameters as it is not easy to get efficiently from inside Sagemaker training script
-        # (this information is not given for instance as Sagemaker environment variables).
-        # This allows to: 1) measure cost in the worker 2) tune instance_type and instance_count by having
-        # ``st_instance_type`` or ``st_instance_count`` in the config space.
-        # TODO once we have a multiobjective scheduler, we should add an example on how to tune instance-type/count.
+        # This passes the instance type and instance count to the training function in
+        # Sagemaker as hyperparameters with reserved names ``st_instance_type`` and
+        # ``st_instance_count``.
+        # We pass them as hyperparameters as it is not easy to get efficiently from
+        # inside Sagemaker training script (this information is not given for instance
+        # as Sagemaker environment variables).
+        # This allows to: 1) measure cost in the worker 2) tune instance_type and
+        # instance_count by having ``st_instance_type`` or ``st_instance_count`` in the
+        # config space.
+        # TODO once we have a multiobjective scheduler, we should add an example on how
+        # to tune instance-type/count.
         if ST_INSTANCE_TYPE not in hyperparameters:
             hyperparameters[ST_INSTANCE_TYPE] = self.sm_estimator.instance_type
         else:
@@ -219,8 +240,8 @@ class SageMakerBackend(TrialBackend):
                 f"Trial {trial_id} will checkpoint results to {checkpoint_s3_uri}."
             )
         else:
-            # checkpointing is not supported in local mode. When using local mode with remote tuner (for instance for
-            # debugging), results are not stored.
+            # checkpointing is not supported in local mode. When using local mode with
+            # remote tuner (for instance for debugging), results are not stored.
             checkpoint_s3_uri = None
 
         # Once a trial gets resumed, the running job number has to feature in
@@ -228,7 +249,8 @@ class SageMakerBackend(TrialBackend):
         try:
             jobname = sagemaker_fit(
                 sm_estimator=self.sm_estimator,
-                # the encoder fixes json error "TypeError: Object of type 'int64' is not JSON serializable"
+                # the encoder fixes json error "TypeError: Object of type 'int64' is
+                # not JSON serializable"
                 hyperparameters=self._numpy_serialize(hyperparameters),
                 checkpoint_s3_uri=checkpoint_s3_uri,
                 job_name=self._make_sagemaker_jobname(
@@ -266,17 +288,19 @@ class SageMakerBackend(TrialBackend):
         job_name += f"-{self.tuner_name}"
         return job_name
 
-    def _pause_trial(self, trial_id: int, result: Optional[dict]):
+    # TODO(@connorbaker): Give a better type to ``result``.
+    def _pause_trial(self, trial_id: int, result: Optional[Dict[str, Any]]) -> None:
         self._stop_trial_job(trial_id)
         self.paused_jobs.add(trial_id)
 
-    def _stop_trial(self, trial_id: int, result: Optional[dict]):
+    # TODO(@connorbaker): Give a better type to ``result``.
+    def _stop_trial(self, trial_id: int, result: Optional[Dict[str, Any]]) -> None:
         training_job_name = self.job_id_mapping[trial_id]
         logger.info(f"stopping {trial_id} ({training_job_name})")
         self._stop_trial_job(trial_id)
         self.stopped_jobs.add(trial_id)
 
-    def _stop_trial_job(self, trial_id: int):
+    def _stop_trial_job(self, trial_id: int) -> None:
         training_job_name = self.job_id_mapping[trial_id]
         try:
             self.sm_client.stop_training_job(TrainingJobName=training_job_name)
@@ -284,7 +308,7 @@ class SageMakerBackend(TrialBackend):
             # the scheduler may have decided to stop a job that finished already
             pass
 
-    def _resume_trial(self, trial_id: int):
+    def _resume_trial(self, trial_id: int) -> None:
         assert (
             trial_id in self.paused_jobs
         ), f"Try to resume trial {trial_id} that was not paused before."
@@ -304,14 +328,15 @@ class SageMakerBackend(TrialBackend):
             reported_trial_ids.add(trial_id)
             if status in BUSY_STATUS:
                 busy_list.append((trial_id, result.status))
-                if status == Status.stopping and trial_id not in self._stopping_time:
+                if status == "Stopping" and trial_id not in self._stopping_time:
                     # First time we see ``Status.stopping`` for this ``trial_id``
                     self._stopping_time[trial_id] = time.time()
             elif trial_id in self._stopping_time:
                 # Trial just stopped being busy
                 stop_time = time.time() - self._stopping_time[trial_id]
                 logger.info(
-                    f"Estimated stopping delay for trial_id {trial_id}: {stop_time:.2f} secs"
+                    f"Estimated stopping delay for trial_id {trial_id}: "
+                    f"{stop_time:.2f} secs"
                 )
                 del self._stopping_time[trial_id]
         # Note: It can happen that the result of ``sagemaker_search`` does
@@ -321,12 +346,12 @@ class SageMakerBackend(TrialBackend):
         for trial_id in self._busy_trial_id_candidates.difference(reported_trial_ids):
             # Assume that status is "in_progress": If ``sagemaker_search``
             # drops jobs, they are the ones that have just been started
-            busy_list.append((trial_id, Status.in_progress))
+            busy_list.append((trial_id, "InProgress"))
             extra_trial_ids.append(trial_id)
         if extra_trial_ids:
             logger.info(
                 f"Did not obtain status for these trial ids: [{extra_trial_ids}]. "
-                f"Will count them as busy with status {Status.in_progress}"
+                f"Will count them as busy with status 'InProgress'."
             )
         return busy_list
 
@@ -363,46 +388,53 @@ class SageMakerBackend(TrialBackend):
 
     @property
     def source_dir(self) -> Optional[str]:
+        assert not isinstance(self.sm_estimator.source_dir, PipelineVariable)
         return self.sm_estimator.source_dir
 
-    def set_entrypoint(self, entry_point: str):
+    def set_entrypoint(self, entry_point: str) -> None:
         self.sm_estimator.entry_point = entry_point
 
     def entrypoint_path(self) -> Path:
+        assert not isinstance(self.sm_estimator.entry_point, PipelineVariable)
         return Path(self.sm_estimator.entry_point)
 
-    def __getstate__(self):
-        # dont store sagemaker client that cannot be serialized, we could remove it by changing our interface
-        # and having kwargs/args of SagemakerFramework in the constructor of this class (that would be serializable)
-        # plus the class (for instance PyTorch)
-        self.sm_estimator.sagemaker_session = None
+    # TODO(@connorbaker) give a better return type
+    def __getstate__(self) -> Dict[str, Any]:
+        # dont store sagemaker client that cannot be serialized, we could remove it by
+        # changing our interface and having kwargs/args of SagemakerFramework in the
+        # constructor of this class (that would be serializable)plus the class (for
+        # instance PyTorch)
+        self.sm_estimator.sagemaker_session = None  # type: ignore[assignment]
         self.sm_estimator.latest_training_job = None
         self.sm_estimator.jobs = []
         return self.__dict__
 
-    def __setstate__(self, state):
+    # TODO(@connorbaker) give a type for state
+    def __setstate__(self, state: Dict[str, Any]) -> None:
         self.__dict__ = state
         self.initialize_sagemaker_session()
 
-        # adjust the dependencies when running Sagemaker backend on sagemaker with remote launcher
-        # since they are in a different path
+        # adjust the dependencies when running Sagemaker backend on sagemaker with
+        # remote launcher since they are in a different path
         is_running_on_sagemaker = "SM_OUTPUT_DIR" in os.environ
         if is_running_on_sagemaker:
-            # todo support dependencies on Sagemaker estimator, one way would be to ship them with the remote
-            #  dependencies
+            # todo support dependencies on Sagemaker estimator, one way would be to
+            # ship them with the remote dependencies
             self.sm_estimator.dependencies = [
                 Path(dep).name for dep in self.sm_estimator.dependencies
             ]
 
-    def initialize_sagemaker_session(self):
+    def initialize_sagemaker_session(self) -> None:
         if boto3.Session().region_name is None:
-            # avoids error "Must setup local AWS configuration with a region supported by SageMaker."
+            # avoids error "Must setup local AWS configuration with a region supported
+            # by SageMaker."
             # in case no region is explicitely configured
             os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 
         if self.sm_estimator.instance_type in ("local", "local_gpu"):
             if (
                 self.sm_estimator.instance_type == "local_gpu"
+                and isinstance(self.sm_estimator.instance_count, int)
                 and self.sm_estimator.instance_count > 1
             ):
                 raise RuntimeError("Distributed Training in Local GPU is not supported")
@@ -412,7 +444,7 @@ class SageMakerBackend(TrialBackend):
             # to configure automatic retry options properly
             self.sm_estimator.sagemaker_session = default_sagemaker_session()
 
-    def copy_checkpoint(self, src_trial_id: int, tgt_trial_id: int):
+    def copy_checkpoint(self, src_trial_id: int, tgt_trial_id: int) -> None:
         s3_source_path = self._checkpoint_s3_uri_for_trial(src_trial_id)
         s3_target_path = self._checkpoint_s3_uri_for_trial(tgt_trial_id)
         logger.info(
@@ -424,14 +456,15 @@ class SageMakerBackend(TrialBackend):
             logger.info(f"No checkpoint files found at {s3_source_path}")
         else:
             num_successful_action_calls = result["num_successful_action_calls"]
-            assert num_successful_action_calls == num_action_calls, (
-                f"{num_successful_action_calls} files copied successfully, "
-                + f"{num_action_calls - num_successful_action_calls} failures. "
-                + "Error:\n"
-                + result["first_error_message"]
-            )
+            if num_successful_action_calls != num_action_calls:
+                assert result["first_error_message"] is None, (
+                    f"{num_successful_action_calls} files copied successfully, "
+                    + f"{num_action_calls - num_successful_action_calls} failures. "
+                    + "Error:\n"
+                    + result["first_error_message"]
+                )
 
-    def delete_checkpoint(self, trial_id: int):
+    def delete_checkpoint(self, trial_id: int) -> None:
         if trial_id in self._trial_ids_deleted_checkpoints:
             return
         s3_path = self._checkpoint_s3_uri_for_trial(trial_id)
@@ -447,6 +480,7 @@ class SageMakerBackend(TrialBackend):
                 f"trial_id {trial_id} from {s3_path}"
             )
         else:
+            assert result["first_error_message"] is not None
             logger.warning(
                 f"Successfully deleted {num_successful_action_calls} "
                 f"checkpoint files for trial_id {trial_id} from "
@@ -457,10 +491,10 @@ class SageMakerBackend(TrialBackend):
 
     def set_path(
         self, results_root: Optional[str] = None, tuner_name: Optional[str] = None
-    ):
+    ) -> None:
         # we use the tuner-name to set the checkpoint directory
         self.tuner_name = tuner_name
 
-    def on_tuner_save(self):
+    def on_tuner_save(self) -> None:
         # Re-initialize the session after :class:`~syne_tune.Tuner` is serialized
         self.initialize_sagemaker_session()

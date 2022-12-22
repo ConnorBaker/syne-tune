@@ -11,9 +11,11 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 import logging
+from pathlib import Path
 
 from sagemaker.estimator import Framework
 from sagemaker.vpc_utils import VPC_CONFIG_DEFAULT
+from typing import NoReturn, Optional, Union, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +28,11 @@ class CustomFramework(Framework):
 
     def __init__(
         self,
-        entry_point,
+        entry_point: Union[str, Path],
         image_uri: str,
         source_dir=None,
         hyperparameters=None,
-        **kwargs
+        **kwargs,
     ) -> None:
         super(CustomFramework, self).__init__(
             str(entry_point), source_dir, hyperparameters, image_uri=image_uri, **kwargs
@@ -38,9 +40,9 @@ class CustomFramework(Framework):
 
     def create_model(
         self,
-        model_server_workers=None,
-        role=None,
-        vpc_config_override=VPC_CONFIG_DEFAULT,
-    ):
+        model_server_workers: Optional[int] = None,
+        role: Optional[str] = None,
+        vpc_config_override: Union[str, Dict[str, List[str]]] = VPC_CONFIG_DEFAULT,
+    ) -> NoReturn:
         # required to allow this object instantiation
         raise NotImplementedError()

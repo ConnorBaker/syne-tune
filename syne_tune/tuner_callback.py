@@ -10,9 +10,11 @@
 # on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
+from dataclasses import dataclass, field
 from time import perf_counter
 import copy
 import logging
+from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from syne_tune.backend.trial_status import Trial
@@ -108,6 +110,7 @@ class TunerCallback:
         pass
 
 
+@dataclass
 class StoreResultsCallback(TunerCallback):
     """
     Default implementation of :class:`~TunerCallback` which records all
@@ -118,15 +121,14 @@ class StoreResultsCallback(TunerCallback):
         :const:`~syne_tune.constants.ST_TUNER_TIME`.
     """
 
-    def __init__(
-        self,
-        add_wallclock_time: bool = True,
-    ):
-        self.results = []
-        self.csv_file = None
-        self.save_results_at_frequency = None
-        self.add_wallclock_time = add_wallclock_time
-        self._start_time_stamp = None
+    add_wallclock_time: bool = True
+
+    results: List[Dict[str, Any]] = field(default_factory=list, init=False)
+    csv_file: Optional[str] = field(default=None, init=False)
+    save_results_at_frequency: Optional[RegularCallback] = field(
+        default=None, init=False
+    )
+    _start_time_stamp: Optional[float] = field(default=None, init=False)
 
     def _set_time_fields(self, result: dict):
         """

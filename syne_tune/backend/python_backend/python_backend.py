@@ -15,15 +15,15 @@ import json
 import logging
 import types
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Optional, Union
 
 import dill
 
 from syne_tune.backend import LocalBackend
-from syne_tune.config_space import config_space_to_json_dict
+from syne_tune.config_space import config_space_to_json_dict, ConfigSpace
 
 
-def file_md5(filename: str) -> str:
+def file_md5(filename: Union[str, Path]) -> str:
     hash_md5 = hashlib.md5()
     with open(filename, "rb") as f:
         for chunk in iter(lambda: f.read(4096), b""):
@@ -78,11 +78,11 @@ class PythonBackend(LocalBackend):
 
     def __init__(
         self,
-        tune_function: Callable,
-        config_space: Dict[str, object],
+        tune_function: Callable[..., Any],
+        config_space: ConfigSpace,
         rotate_gpus: bool = True,
         delete_checkpoints: bool = False,
-    ):
+    ) -> None:
         super(PythonBackend, self).__init__(
             entry_point=str(Path(__file__).parent / "python_entrypoint.py"),
             rotate_gpus=rotate_gpus,
@@ -94,32 +94,37 @@ class PythonBackend(LocalBackend):
 
     @property
     def tune_function_path(self) -> Path:
+        assert self.local_path is not None, "set_path must be called first"
         return self.local_path / "tune_function"
 
     def set_path(
         self, results_root: Optional[str] = None, tuner_name: Optional[str] = None
-    ):
+    ) -> None:
         super(PythonBackend, self).set_path(
             results_root=results_root, tuner_name=tuner_name
         )
+        assert self.local_path is not None, "set_path must be called first"
         if self.local_path.exists():
             logging.warning(
-                f"Path {self.local_path} already exists, make sure you have a unique tuner name."
+                f"Path {self.local_path} already exists, make sure you have a unique "
+                "tuner name."
             )
 
-    def _schedule(self, trial_id: int, config: dict):
+    # TODO(@connorbaker): Give a type to config
+    def _schedule(self, trial_id: int, config: dict) -> None:
         if not (self.tune_function_path / "tune_function.dill").exists():
             self.save_tune_function(self.tune_function)
         config = config.copy()
         config["tune_function_root"] = str(self.tune_function_path)
-        # to detect if the serialized function is the same as the one passed by the user, we pass the md5 to the
-        # endpoint script. The hash is checked before executing the function.
+        # to detect if the serialized function is the same as the one passed by the
+        # user, we pass the md5 to the endpoint script. The hash is checked before
+        # executing the function.
         config["tune_function_hash"] = file_md5(
             str(self.tune_function_path / "tune_function.dill")
         )
         super(PythonBackend, self)._schedule(trial_id=trial_id, config=config)
 
-    def save_tune_function(self, tune_function):
+    def save_tune_function(self, tune_function: Callable[..., Any]) -> None:
         self.tune_function_path.mkdir(parents=True, exist_ok=True)
         with open(self.tune_function_path / "tune_function.dill", "wb") as file:
             dill.dump(tune_function, file)

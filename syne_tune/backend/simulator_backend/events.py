@@ -11,7 +11,8 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
+from syne_tune.backend.trial_status import Status
 import heapq
 
 
@@ -43,7 +44,7 @@ class CompleteEvent(Event):
 
     """
 
-    status: str
+    status: Status
 
 
 @dataclass
@@ -63,7 +64,7 @@ class OnTrialResultEvent(Event):
 
     """
 
-    result: dict
+    result: Dict[str, Any]
 
 
 EventHeapType = List[Tuple[float, int, Event]]
@@ -82,13 +83,13 @@ class SimulatorState:
 
     def __init__(
         self, event_heap: Optional[EventHeapType] = None, events_added: int = 0
-    ):
+    ) -> None:
         if event_heap is None:
             event_heap = []
         self.event_heap = event_heap
         self.events_added = events_added
 
-    def push(self, event: Event, event_time: float):
+    def push(self, event: Event, event_time: float) -> None:
         """
         Push new event onto heap
 
@@ -98,7 +99,7 @@ class SimulatorState:
         heapq.heappush(self.event_heap, (event_time, self.events_added, event))
         self.events_added += 1
 
-    def remove_events(self, trial_id: int):
+    def remove_events(self, trial_id: int) -> None:
         """
         Remove all events with trial_id equal to ``trial_id``.
 

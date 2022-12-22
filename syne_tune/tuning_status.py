@@ -151,11 +151,10 @@ class TuningStatus:
         """
         return len(self.last_trial_status_seen)
 
-    def _num_trials(self, status: Union[str, Set[str]]):
-        if isinstance(status, str):
-            status = set([status])
-        elif not isinstance(status, set):
-            status = set(status)
+    def _num_trials(self, status: Union[Status, Set[Status]]):
+        if isinstance(status, Status):
+            status = {status}
+
         return sum(
             trial_status in status
             for trial_status in self.last_trial_status_seen.values()

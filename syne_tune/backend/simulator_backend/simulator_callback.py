@@ -10,7 +10,9 @@
 # on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
+from dataclasses import dataclass, field
 import logging
+from typing import Optional
 
 from syne_tune.tuner_callback import StoreResultsCallback
 from syne_tune.backend.simulator_backend.simulator_backend import SimulatorBackend
@@ -18,10 +20,12 @@ from syne_tune import Tuner
 from syne_tune.constants import ST_TUNER_TIME
 from syne_tune import StoppingCriterion
 from syne_tune.optimizer.schedulers.fifo import FIFOScheduler
+from syne_tune.backend.time_keeper import TimeKeeper
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class SimulatorCallback(StoreResultsCallback):
     """
     Callback to be used in :meth:`~syne_tune.Tuner.run` in order to support the
@@ -38,8 +42,8 @@ class SimulatorCallback(StoreResultsCallback):
     entries to each result it receives.
 
     Third (and most subtle), we need to make sure the stop criterion in
-    :meth:`~syne_tune.Tuner.run` is using simulated time instead of real time when making
-    a decision based on ``max_wallclock_time``. By default,
+    :meth:`~syne_tune.Tuner.run` is using simulated time instead of real time when
+    making a decision based on ``max_wallclock_time``. By default,
     :class:`~syne_tune.StoppingCriterion` takes ``TuningStatus`` as an input,
     which counts real time and knows nothing about simulated time. To this
     end, we modify ``stop_criterion`` of the tuner to instead depend on the
@@ -48,17 +52,17 @@ class SimulatorCallback(StoreResultsCallback):
     keeper.
     """
 
-    def __init__(self):
-        # Note: ``results_update_interval`` is w.r.t. real time, not
-        # simulated time. Storing results intermediately is not important for
-        # the simulator back-end, so the default is larger
-        super().__init__(add_wallclock_time=True)
-        self._tuner_sleep_time = None
-        self._time_keeper = None
-        self._tuner = None
-        self._backup_stop_criterion = None
+    # Note: ``results_update_interval`` is w.r.t. real time, not
+    # simulated time. Storing results intermediately is not important for
+    # the simulator back-end, so the default is larger
+    _tuner_sleep_time: Optional[float] = field(default=None, init=False)
+    _time_keeper: Optional[TimeKeeper] = field(default=None, init=False)
+    _tuner: Optional[Tuner] = field(default=None, init=False)
+    _backup_stop_criterion: Optional[StoppingCriterion] = field(
+        default=None, init=False
+    )
 
-    def _modify_stop_criterion(self, tuner: "Tuner"):
+    def _modify_stop_criterion(self, tuner: "Tuner") -> None:
         stop_criterion = tuner.stop_criterion
         if not isinstance(stop_criterion, StoppingCriterion):
             # Note: We could raise an exception here ...
@@ -87,7 +91,7 @@ class SimulatorCallback(StoreResultsCallback):
             )
             tuner.stop_criterion = new_stop_criterion
 
-    def on_tuning_start(self, tuner: "Tuner"):
+    def on_tuning_start(self, tuner: "Tuner") -> None:
         super(SimulatorCallback, self).on_tuning_start(tuner=tuner)
         if tuner.sleep_time != 0:
             logger.warning(
@@ -118,11 +122,18 @@ class SimulatorCallback(StoreResultsCallback):
         self._modify_stop_criterion(tuner)
         self._tuner = tuner
 
-    def on_tuning_sleep(self, sleep_time: float):
+    def on_tuning_sleep(self, sleep_time: float) -> None:
+        assert (
+            self._time_keeper is not None and self._tuner_sleep_time is not None
+        ), "on_tuning_sleep called before on_tuning_start"
         self._time_keeper.advance(self._tuner_sleep_time)
 
-    def on_tuning_end(self):
+    def on_tuning_end(self) -> None:
         super().on_tuning_end()
         # Restore ``stop_criterion``
+        assert self._tuner is not None, "on_tuning_end called before on_tuning_start"
+        assert (
+            self._backup_stop_criterion is not None
+        ), "on_tuning_end called before on_tuning_start"
         self._tuner.stop_criterion = self._backup_stop_criterion
         self._tuner = None
