@@ -1,0 +1,18 @@
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.mypy]
+python_version = "3.9"
+platform = "linux"
+# TODO: Clean up the code so it passes strict checks
+strict = false
+warn_unused_ignores = false # Pyright catches different things than mypy
+
+[tool.pyright]
+include = ["./syne_tune"]
+pythonVersion = "3.9"
+pythonPlatform = "Linux"
+# TODO: Clean up the code so it passes strict checks
+typeCheckingMode = "basic"
+useLibraryCodeForTypes = true

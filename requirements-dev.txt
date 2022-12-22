@@ -4,6 +4,8 @@ pytest-timeout
 # https://github.com/psf/black/issues/2964
 black==22.3.0
 flake8
+mypy
+pyright
 sphinx
 sphinx-rtd-theme
 sphinx-autodoc-typehints
